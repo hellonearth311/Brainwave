@@ -1,8 +1,16 @@
 import subprocess
 import atexit
-import ollama
 import sys
 import time
+
+# Try to import ollama
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
+# Set the correct ollama command path for Windows
+OLLAMA_CMD = r'C:\Users\Server\AppData\Local\Programs\Ollama\ollama.exe'
 
 def install_deps():
     """
@@ -32,12 +40,18 @@ def install_deps():
     # Install dependencies using winget
     try:
         print("Installing ollama...")
-        subprocess.run(['winget', 'install', 'Ollama.Ollama'], check=True, shell=True)
-        print("ollama installed successfully.")
-    except subprocess.CalledProcessError as e:
-        print("Failed to install ollama. Please check your winget installation and try again.")
-        print(e)
-        exit(1)
+        result = subprocess.run(['winget', 'install', 'Ollama.Ollama'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        if result.returncode == 0:
+            print("ollama installed successfully.")
+        else:
+            # Check if it's already installed
+            output = result.stderr.decode() + result.stdout.decode()
+            if "already installed" in output.lower() or "existing package" in output.lower():
+                print("ollama is already installed.")
+            else:
+                print("Failed to install ollama. Please check your winget installation and try again.")
+                print(output)
+                exit(1)
     except Exception as e:
         print("An unexpected error occurred while installing ollama.")
         print(e)
@@ -46,17 +60,32 @@ def install_deps():
     # Verify ollama installation
     try:
         print("Verifying ollama installation...")
-        result = subprocess.run(['ollama', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Try with full path first (common Windows installation location)
+        ollama_paths = [
+            r"C:\Users\Server\AppData\Local\Programs\Ollama\ollama.exe",
+            "ollama"  # Fallback to PATH
+        ]
         
-        if result.returncode == 0:
-            print("ollama is installed successfully.")
-            print(result.stdout.decode())  # Print the version
-        else:
+        ollama_found = False
+        for ollama_path in ollama_paths:
+            try:
+                result = subprocess.run([ollama_path, '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if result.returncode == 0:
+                    print("ollama is installed successfully.")
+                    print(result.stdout.decode())  # Print the version
+                    ollama_found = True
+                    # Set the working ollama command for later use
+                    globals()['OLLAMA_CMD'] = ollama_path
+                    break
+            except FileNotFoundError:
+                continue
+        
+        if not ollama_found:
             print("ollama installation failed. Please check the error message.")
-            print(result.stderr.decode())
             exit(1)
-    except FileNotFoundError:
-        print("ollama is not installed. Please check your installation.")
+    except Exception as e:
+        print("An unexpected error occurred while verifying ollama installation.")
+        print(e)
         exit(1)
     except Exception as e:
         print("An unexpected error occurred while verifying ollama installation.")
@@ -96,10 +125,14 @@ def install_deps():
         print(e)
         exit(1)
 
+    # Start the ollama server before pulling models
+    start_server()
+
     # Install llama3.2 small LLM via ollama
     try:
         print("Installing Llama 3.2 small LLM via ollama...")
-        subprocess.run(['ollama', 'pull', 'llama3.2:3b'], check=True, shell=True)
+        ollama_cmd = globals().get('OLLAMA_CMD', 'ollama')
+        subprocess.run([ollama_cmd, 'pull', 'llama3.2:3b'], check=True, shell=True)
         print("Llama 3.2 small LLM installed successfully.")
     except subprocess.CalledProcessError as e:
         print("Failed to install Llama 3.2 small LLM. Please check your ollama installation and try again.")
@@ -113,7 +146,8 @@ def install_deps():
     # Verify Llama 3.2 LLM installation
     try:
         print("Verifying Llama 3.2 LLM installation...")
-        result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        ollama_cmd = globals().get('OLLAMA_CMD', 'ollama')
+        result = subprocess.run([ollama_cmd, 'list'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         
         if result.returncode == 0:
             output = result.stdout.decode()
@@ -145,8 +179,9 @@ def start_server():
         if "ollama.exe" in ps_result.stdout.decode():
             print("Ollama server is already running.")
         else:
+            ollama_cmd = globals().get('OLLAMA_CMD', 'ollama')
             subprocess.Popen(
-                ["ollama", "serve"],
+                [ollama_cmd, "serve"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 shell=True
